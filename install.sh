@@ -62,11 +62,27 @@ echo ">>> Detecting audio capture devices..."
 arecord -l || true
 echo ""
 
-CARD_NAME=$(arecord -l | grep -oP '^card \d+: \K\S+' | head -n1)
+mapfile -t CARD_LINES < <(arecord -l | grep -oP '^card \d+: \S+ \[[^\]]+\]' | awk '!seen[$0]++')
 
-if [ -z "$CARD_NAME" ]; then
+if [ "${#CARD_LINES[@]}" -eq 0 ]; then
     echo "!!! No capture device detected. Plug in your USB mic and re-run this script."
     exit 1
+elif [ "${#CARD_LINES[@]}" -eq 1 ]; then
+    CARD_NAME=$(echo "${CARD_LINES[0]}" | grep -oP '^card \d+: \K\S+')
+else
+    echo "Multiple capture devices detected:"
+    for i in "${!CARD_LINES[@]}"; do
+        echo "  $((i + 1))) ${CARD_LINES[$i]}"
+    done
+    echo ""
+    while true; do
+        read -p "Select the sound card to use [1-${#CARD_LINES[@]}]: " SELECTION
+        if [[ "$SELECTION" =~ ^[0-9]+$ ]] && [ "$SELECTION" -ge 1 ] && [ "$SELECTION" -le "${#CARD_LINES[@]}" ]; then
+            break
+        fi
+        echo "Invalid selection, try again."
+    done
+    CARD_NAME=$(echo "${CARD_LINES[$((SELECTION - 1))]}" | grep -oP '^card \d+: \K\S+')
 fi
 
 echo "Detected card name: $CARD_NAME"
