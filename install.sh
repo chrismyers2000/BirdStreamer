@@ -30,7 +30,7 @@ case "$(uname -m)" in
         exit 1
         ;;
 esac
-MEDIAMTX_URL="https://github.com/bluenviron/mediamtx/releases/download/${MEDIAMTX_VERSION}/mediamtx_${MEDIAMTX_VERSION}_linux_${MEDIAMTX_ARCH}.tar.gz"
+MEDIAMTX_URL="https://raw.githubusercontent.com/chrismyers2000/BirdStreamer/main/vendor/mediamtx/mediamtx_${MEDIAMTX_VERSION}_linux_${MEDIAMTX_ARCH}.tar.gz"
 MEDIAMTX_VENDORED="${SCRIPT_DIR}/vendor/mediamtx/mediamtx_${MEDIAMTX_VERSION}_linux_${MEDIAMTX_ARCH}.tar.gz"
 
 echo "=== RTSP Audio Streamer Setup ==="
