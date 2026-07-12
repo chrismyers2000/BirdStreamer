@@ -17,11 +17,13 @@
 #
 # Run as your normal user (NOT root) - it will use sudo where needed.
 
+import importlib.util
 import os
 import re
 import subprocess
 import sys
 import tarfile
+import tempfile
 import urllib.request
 from pathlib import Path
 
@@ -38,6 +40,42 @@ def run(cmd, **kwargs):
 def sudo_write(path, content):
     subprocess.run(["sudo", "tee", path], input=content, text=True,
                     stdout=subprocess.DEVNULL, check=True)
+
+
+def fetch_repo_file(dest, filename, script_dir):
+    """Copy filename from a local checkout (script_dir) if present, else
+    download it from this repo's own GitHub mirror - same vendored-or-mirror
+    pattern used for the MediaMTX binaries."""
+    if script_dir and (script_dir / filename).is_file():
+        dest.write_bytes((script_dir / filename).read_bytes())
+    else:
+        url = f"https://raw.githubusercontent.com/chrismyers2000/BirdStreamer/main/{filename}"
+        urllib.request.urlretrieve(url, dest)
+
+
+def install_sudoers_rule(user_name, audio_service_path):
+    """Grant just enough passwordless sudo for the web UI to restart the
+    audio service and rewrite its unit file - not blanket sudo access.
+    User confirmed this approach explicitly (2026-07-12) over running the
+    whole web service as root. Validated with `visudo -c` before ever being
+    placed as a live file, since a malformed /etc/sudoers.d file can break
+    sudo system-wide."""
+    content = (
+        f"{user_name} ALL=(ALL) NOPASSWD: "
+        f"/usr/bin/tee {audio_service_path}, "
+        "/usr/bin/systemctl daemon-reload, "
+        "/usr/bin/systemctl start audio-rtsp, "
+        "/usr/bin/systemctl stop audio-rtsp, "
+        "/usr/bin/systemctl restart audio-rtsp\n"
+    )
+    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".sudoers") as f:
+        f.write(content)
+        tmp_path = f.name
+    try:
+        run(["sudo", "visudo", "-c", "-f", tmp_path])
+        run(["sudo", "install", "-m", "0440", tmp_path, "/etc/sudoers.d/birdstreamer-webui"])
+    finally:
+        os.unlink(tmp_path)
 
 
 def print_banner():
@@ -109,7 +147,7 @@ def main():
     # 1. Update system + install dependencies
     print(">>> Installing ffmpeg and ALSA tools...")
     run(["sudo", "apt", "update"])
-    run(["sudo", "apt", "install", "-y", "ffmpeg", "alsa-utils", "wget"])
+    run(["sudo", "apt", "install", "-y", "ffmpeg", "alsa-utils", "wget", "python3-flask"])
 
     # 2. Detect USB microphone
     print()
@@ -147,8 +185,6 @@ def main():
     print()
     input("Press Enter to continue, or Ctrl+C to abort...")
 
-    alsa_device = f"plughw:CARD={card_name},DEV=0"
-
     # 3. Download and set up MediaMTX
     print()
     print(f">>> Installing MediaMTX {MEDIAMTX_VERSION}...")
@@ -183,32 +219,51 @@ User={user_name}
 WantedBy=multi-user.target
 """)
 
-    # 5. Create systemd service for the audio publisher
+    # 5. Set up the web control panel (birdstreamer_common.py + webui.py),
+    # and use the shared module to build audio-rtsp.service so both the
+    # installer and the web UI build it from the exact same config/logic.
+    print()
+    print(">>> Setting up web control panel...")
+    app_dir = home_dir / ".birdstreamer"
+    app_dir.mkdir(parents=True, exist_ok=True)
+    fetch_repo_file(app_dir / "birdstreamer_common.py", "birdstreamer_common.py", script_dir)
+    fetch_repo_file(app_dir / "webui.py", "webui.py", script_dir)
+
+    spec = importlib.util.spec_from_file_location("birdstreamer_common", app_dir / "birdstreamer_common.py")
+    common = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(common)
+
+    config = common.load_config()
+    config["card_name"] = card_name
+    common.save_config(config)
+
     print(">>> Creating audio-rtsp.service...")
-    sudo_write("/etc/systemd/system/audio-rtsp.service", f"""[Unit]
-Description=Audio RTSP Publisher
-After=mediamtx.service sound.target
-Requires=mediamtx.service
-StartLimitIntervalSec=120
-StartLimitBurst=10
+    common.write_audio_service(config)
+
+    print(">>> Creating birdstreamer-webui.service...")
+    sudo_write("/etc/systemd/system/birdstreamer-webui.service", f"""[Unit]
+Description=BirdStreamer Web Control Panel
+After=network.target
 
 [Service]
-ExecStartPre=/bin/sleep 10
-ExecStart=/usr/bin/ffmpeg -f alsa -ar 48000 -ac 1 -use_wallclock_as_timestamps 1 -i {alsa_device} -acodec pcm_s16be -f rtsp rtsp://localhost:{RTSP_PORT}/{STREAM_PATH}
+ExecStart=/usr/bin/python3 {app_dir}/webui.py
 Restart=always
-RestartSec=5
 User={user_name}
 
 [Install]
 WantedBy=multi-user.target
 """)
 
-    # 6. Enable and start both services
+    print(">>> Configuring sudo permissions for the web control panel...")
+    install_sudoers_rule(user_name, common.AUDIO_SERVICE_PATH)
+
+    # 6. Enable and start all services
     print()
     print(">>> Enabling and starting services...")
     run(["sudo", "systemctl", "daemon-reload"])
     run(["sudo", "systemctl", "enable", "--now", "mediamtx"])
     run(["sudo", "systemctl", "enable", "--now", "audio-rtsp"])
+    run(["sudo", "systemctl", "enable", "--now", "birdstreamer-webui"])
 
     # 7. Hardware watchdog (systemd-managed, 15s timeout)
     print()
@@ -228,13 +283,14 @@ WantedBy=multi-user.target
     ip = run(["hostname", "-I"], capture_output=True, text=True).stdout.split()[0]
     print()
     print("=== Setup complete ===")
-    print(f"Stream URL:  rtsp://{ip}:{RTSP_PORT}/{STREAM_PATH}")
+    print(f"Stream URL:       rtsp://{ip}:{RTSP_PORT}/{STREAM_PATH}")
+    print(f"Control panel:    http://{ip}:8080")
     print()
     print("Reboot now to apply the watchdog timeout and verify everything auto-starts:")
     print("  sudo reboot")
     print()
     print("After reboot, check status with:")
-    print("  sudo systemctl status mediamtx audio-rtsp")
+    print("  sudo systemctl status mediamtx audio-rtsp birdstreamer-webui")
     print("  dmesg | grep -i watchdog")
 
 

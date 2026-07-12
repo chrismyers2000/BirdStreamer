@@ -14,6 +14,7 @@
 #
 # Run as your normal user (NOT root) - it will use sudo where needed.
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -33,20 +34,27 @@ def main():
     print(">>> Stopping and disabling services...")
     run(["sudo", "systemctl", "disable", "--now", "audio-rtsp"], stderr=subprocess.DEVNULL)
     run(["sudo", "systemctl", "disable", "--now", "mediamtx"], stderr=subprocess.DEVNULL)
+    run(["sudo", "systemctl", "disable", "--now", "birdstreamer-webui"], stderr=subprocess.DEVNULL)
 
     # 2. Remove systemd unit files
     print(">>> Removing systemd unit files...")
     run(["sudo", "rm", "-f", "/etc/systemd/system/audio-rtsp.service"])
     run(["sudo", "rm", "-f", "/etc/systemd/system/mediamtx.service"])
+    run(["sudo", "rm", "-f", "/etc/systemd/system/birdstreamer-webui.service"])
     run(["sudo", "systemctl", "daemon-reload"])
-    run(["sudo", "systemctl", "reset-failed", "audio-rtsp", "mediamtx"], stderr=subprocess.DEVNULL)
+    run(["sudo", "systemctl", "reset-failed", "audio-rtsp", "mediamtx", "birdstreamer-webui"], stderr=subprocess.DEVNULL)
 
     # 3. Remove MediaMTX binary and config
     print(">>> Removing MediaMTX binary and config...")
     (home_dir / "mediamtx").unlink(missing_ok=True)
     (home_dir / "mediamtx.yml").unlink(missing_ok=True)
 
-    # 4. Remove hardware watchdog override
+    # 4. Remove web control panel: its sudoers rule, app files, and config
+    print(">>> Removing web control panel...")
+    run(["sudo", "rm", "-f", "/etc/sudoers.d/birdstreamer-webui"])
+    shutil.rmtree(home_dir / ".birdstreamer", ignore_errors=True)
+
+    # 5. Remove hardware watchdog override
     print()
     print(">>> Removing hardware watchdog override...")
     run(["sudo", "rm", "-f", "/etc/systemd/system.conf.d/50-watchdog-override.conf"])
@@ -55,8 +63,8 @@ def main():
     print()
     print("=== Uninstall complete ===")
     print("Note: the RuntimeWatchdogSec change needs 'sudo systemctl daemon-reexec' or a reboot to fully revert in the running system.")
-    print("Note: ffmpeg, alsa-utils, and wget were left installed (shared system packages).")
-    print("      Remove manually if desired: sudo apt remove ffmpeg alsa-utils wget")
+    print("Note: ffmpeg, alsa-utils, wget, and python3-flask were left installed (shared system packages).")
+    print("      Remove manually if desired: sudo apt remove ffmpeg alsa-utils wget python3-flask")
 
 
 if __name__ == "__main__":
