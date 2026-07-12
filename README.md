@@ -4,13 +4,13 @@
 ============================================
 ```
 
-## What is this?
+## What is Bird Streamer?
 
-BirdStreamer turns a Raspberry Pi into a headless USB-microphone-to-RTSP audio streamer. Plug a USB mic into a Pi, run the installer, and it publishes a live RTSP audio stream you can point at [BirdNet-Go](https://github.com/tphakala/birdnet-go) or [BirdNET-Pi](https://github.com/mcguirepr89/BirdNET-Pi) (or anything else that can consume RTSP) for bird sound identification.
+BirdStreamer turns a Raspberry Pi into a headless USB-microphone-to-RTSP audio streamer for Birdnet-go or Birdnetpi. Plug a USB mic into a Pi, run the installer, and it publishes a live RTSP audio stream you can point at [BirdNet-Go](https://github.com/tphakala/birdnet-go) or [BirdNET-Pi](https://github.com/mcguirepr89/BirdNET-Pi) (or anything else that can consume RTSP) for bird sound identification.
 
 It uses [MediaMTX](https://github.com/bluenviron/mediamtx) as the RTSP server and `ffmpeg` to capture and publish the mic audio, both run as systemd services so the stream comes back up automatically on boot or after a crash. A small local web control panel lets you change audio settings afterward without needing to SSH back in.
 
-**Supported hardware:** any Raspberry Pi except the Pico, Pi 1, and Pi 2 — **including the Raspberry Pi Zero 2 W**, but **not** the original (single-core) Raspberry Pi Zero W. That board's CPU can't reliably keep up with `ffmpeg` + MediaMTX running at once (confirmed via testing: pegged at 100% CPU, intermittent stream), so the installer detects and refuses to run on it rather than leave you with a flaky setup.
+**Supported hardware:** any Raspberry Pi newer and faster than  the Raspberry Pi Zero 2 W**, but **not** the original (single-core) Raspberry Pi Zero W. That board's CPU can't reliably keep up with `ffmpeg` + MediaMTX running at once (confirmed via testing: pegged at 100% CPU, intermittent stream), so the installer detects and refuses to run on it rather than leave you with a flaky setup.
 
 ## How to use it
 
@@ -25,14 +25,6 @@ It will detect your USB mic (prompting you to pick one if more than one is plugg
 ```
 Stream URL:       rtsp://<pi-ip>:8554/mic
 Control panel:    http://<pi-ip>:8080
-```
-
-**From a local checkout**, if you'd rather clone the repo first (this also gets you `uninstall.py` and the vendored MediaMTX binaries, so the installer doesn't need network access to fetch them):
-
-```bash
-git clone https://github.com/chrismyers2000/BirdStreamer.git
-cd BirdStreamer
-./install.py
 ```
 
 **Uninstalling** reverses everything the installer set up (services, the web control panel, the hardware watchdog config) and leaves shared system packages (`ffmpeg`, `alsa-utils`, etc.) alone:
