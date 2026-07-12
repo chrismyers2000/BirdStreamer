@@ -1,8 +1,12 @@
 #!/bin/bash
 #
 # RTSP Audio Streamer Setup Script
-# Turns a Raspberry Pi (Zero W, Zero 2W, 4, etc.) into a headless USB mic -> RTSP streamer.
+# Turns a Raspberry Pi (Zero 2 W, 4, etc.) into a headless USB mic -> RTSP streamer.
 # Tested on Debian/Raspberry Pi OS (armv6, arm64).
+#
+# NOT SUPPORTED: the original Raspberry Pi Zero W. Its single-core CPU can't
+# reliably run ffmpeg + MediaMTX at once - confirmed via testing: CPU pegged
+# at 100%, stream intermittent. Use a Zero 2 W or newer instead.
 #
 # Usage:
 #   chmod +x install_rtsp_streamer.sh
@@ -13,6 +17,15 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+PI_MODEL="$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || true)"
+if [[ "$PI_MODEL" == *"Zero W"* ]] && [[ "$PI_MODEL" != *"Zero 2 W"* ]]; then
+    echo "!!! Unsupported hardware: $PI_MODEL"
+    echo "!!! The original Pi Zero W's single-core CPU can't reliably run ffmpeg + MediaMTX"
+    echo "!!! at the same time - confirmed via testing: CPU pegged at 100%, stream intermittent."
+    echo "!!! Use a Raspberry Pi Zero 2 W or newer."
+    exit 1
+fi
 
 MEDIAMTX_VERSION="v1.19.2"
 USER_NAME="$(whoami)"
