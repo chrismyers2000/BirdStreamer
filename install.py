@@ -40,18 +40,29 @@ def sudo_write(path, content):
                     stdout=subprocess.DEVNULL, check=True)
 
 
+def print_banner():
+    text = "BIRD STREAMER"
+    width = 44
+    print("=" * width)
+    print("||" + text.center(width - 4) + "||")
+    print("=" * width)
+    print()
+
+
 def main():
+    # Force line buffering even when stdout is piped (e.g. through `tee`),
+    # so our prints interleave correctly with subprocess output instead of
+    # appearing to run out of order.
+    sys.stdout.reconfigure(line_buffering=True)
+
+    print_banner()
+
     # When piped (e.g. curl ... | python3), stdin is the script itself, not
     # the terminal - reattach stdin to the real tty so input() below still
     # works. Safe in Python (unlike bash): the interpreter has already fully
     # read/compiled the script from stdin before this code runs.
     if not sys.stdin.isatty():
         sys.stdin = open("/dev/tty")
-
-    # Force line buffering even when stdout is piped (e.g. through `tee`),
-    # so our prints interleave correctly with subprocess output instead of
-    # appearing to run out of order.
-    sys.stdout.reconfigure(line_buffering=True)
 
     try:
         script_dir = Path(__file__).resolve().parent
