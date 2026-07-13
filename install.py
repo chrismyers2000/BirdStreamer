@@ -20,11 +20,19 @@
 import importlib.util
 import os
 import re
+import socket
 import subprocess
 import sys
 import tarfile
 import tempfile
 import urllib.request
+
+# Without this, a stalled connection (not an error, just no data ever
+# arriving - seen in practice on a flaky Wi-Fi link) leaves urlretrieve
+# hanging forever with no feedback. 30s is generous for a single HTTP
+# request/small-file fetch; MediaMTX's ~28MB tarball still finishes in a
+# few seconds on a normal connection.
+socket.setdefaulttimeout(30)
 from pathlib import Path
 
 MEDIAMTX_VERSION = "v1.19.2"

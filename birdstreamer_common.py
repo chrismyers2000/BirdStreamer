@@ -9,10 +9,17 @@
 import getpass
 import json
 import re
+import socket
 import subprocess
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+# Without this, fetch_repo_file()'s download can hang forever on a stalled
+# connection (seen in practice on a flaky Wi-Fi link), freezing webui.py's
+# self-update request indefinitely. get_mediamtx_status() already sets its
+# own shorter per-call timeout, which takes precedence over this default.
+socket.setdefaulttimeout(30)
 
 APP_DIR = Path.home() / ".birdstreamer"
 CONFIG_PATH = APP_DIR / "config.json"
