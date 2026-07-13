@@ -203,6 +203,14 @@ def main():
     else:
         print("mediamtx binary already present, skipping download.")
 
+    # Enable MediaMTX's local API (disabled by default) - it's unauthenticated
+    # only from 127.0.0.1, so the web control panel can query viewer count /
+    # live stream stats without exposing anything externally.
+    mediamtx_yml = home_dir / "mediamtx.yml"
+    if mediamtx_yml.is_file():
+        yml_content = mediamtx_yml.read_text()
+        mediamtx_yml.write_text(yml_content.replace("api: false", "api: yes", 1))
+
     # 4. Create systemd service for MediaMTX
     print()
     print(">>> Creating mediamtx.service...")

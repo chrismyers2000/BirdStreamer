@@ -10,6 +10,8 @@ import getpass
 import json
 import re
 import subprocess
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 APP_DIR = Path.home() / ".birdstreamer"
@@ -18,6 +20,11 @@ AUDIO_SERVICE_PATH = "/etc/systemd/system/audio-rtsp.service"
 RTSP_PORT = 8554
 STREAM_PATH = "mic"
 SAMPLE_RATES = [8000, 16000, 22050, 44100, 48000]
+GAIN_MIN, GAIN_MAX = 0.5, 4.0
+HIGHPASS_FREQ_MIN, HIGHPASS_FREQ_MAX = 20, 1000
+
+GITHUB_RAW_BASE = "https://raw.githubusercontent.com/chrismyers2000/BirdStreamer/main"
+MEDIAMTX_API_BASE = "http://127.0.0.1:9997"
 
 DEFAULT_CONFIG = {
     "card_name": None,
@@ -100,9 +107,16 @@ WantedBy=multi-user.target
     subprocess.run(["sudo", "systemctl", "daemon-reload"], check=True)
 
 
-def is_audio_stream_active():
+def get_audio_stream_state():
+    """Returns 'active', 'inactive', 'failed', or another systemd ActiveState
+    value (e.g. 'activating') - distinguishes a clean stop from a crash loop,
+    unlike a plain is-active check."""
     result = subprocess.run(["systemctl", "is-active", "audio-rtsp"], capture_output=True, text=True)
-    return result.stdout.strip() == "active"
+    return result.stdout.strip()
+
+
+def is_audio_stream_active():
+    return get_audio_stream_state() == "active"
 
 
 def start_audio_stream():
@@ -115,3 +129,61 @@ def stop_audio_stream():
 
 def restart_audio_stream():
     subprocess.run(["sudo", "systemctl", "restart", "audio-rtsp"], check=True)
+
+
+def get_cpu_temp_celsius():
+    try:
+        millidegrees = int(Path("/sys/class/thermal/thermal_zone0/temp").read_text().strip())
+        return round(millidegrees / 1000, 1)
+    except (FileNotFoundError, ValueError):
+        return None
+
+
+def get_uptime_string():
+    try:
+        seconds = float(Path("/proc/uptime").read_text().split()[0])
+    except (FileNotFoundError, ValueError, IndexError):
+        return None
+    days, seconds = divmod(int(seconds), 86400)
+    hours, seconds = divmod(seconds, 3600)
+    minutes = seconds // 60
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hours or days:
+        parts.append(f"{hours}h")
+    parts.append(f"{minutes}m")
+    return " ".join(parts)
+
+
+def get_mediamtx_status():
+    """Queries MediaMTX's local API (unauthenticated from 127.0.0.1 by
+    default) for the "mic" path's live state - whether it's actually
+    publishing, how many RTSP clients are connected, and the real
+    negotiated sample rate/channels (a good cross-check that a settings
+    change actually took effect). Requires `api: yes` in mediamtx.yml
+    (set by install.py) - returns None if the API isn't reachable."""
+    try:
+        with urllib.request.urlopen(f"{MEDIAMTX_API_BASE}/v3/paths/get/{STREAM_PATH}", timeout=2) as resp:
+            data = json.loads(resp.read())
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError):
+        return None
+    track_info = (data.get("tracks2") or [{}])[0].get("codecProps", {})
+    return {
+        "ready": data.get("ready", False),
+        "readers": len(data.get("readers", [])),
+        "sample_rate": track_info.get("sampleRate"),
+        "channels": track_info.get("channelCount"),
+    }
+
+
+def fetch_repo_file(dest, filename, script_dir=None):
+    """Copy filename from a local checkout (script_dir) if present, else
+    download it from this repo's own GitHub mirror. Used both by install.py
+    (initial setup) and webui.py (self-update) - install.py can't rely on
+    importing this for the very first fetch of this file itself, so it
+    keeps its own minimal bootstrap copy of this logic for that one case."""
+    if script_dir and (Path(script_dir) / filename).is_file():
+        dest.write_bytes((Path(script_dir) / filename).read_bytes())
+    else:
+        urllib.request.urlretrieve(f"{GITHUB_RAW_BASE}/{filename}", dest)
