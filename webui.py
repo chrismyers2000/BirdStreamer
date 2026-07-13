@@ -84,7 +84,8 @@ PAGE = """<!doctype html>
 
   <div class="statgrid">
     <div><span>CPU temp</span>{{ cpu_temp ~ '°C' if cpu_temp is not none else 'n/a' }}</div>
-    <div><span>Uptime</span>{{ uptime or 'n/a' }}</div>
+    <div><span>CPU usage</span>{{ cpu_usage ~ '%' if cpu_usage is not none else 'n/a' }}</div>
+    <div><span>Stream uptime</span>{{ stream_uptime or 'n/a' }}</div>
     <div><span>Viewers</span>{{ mediamtx.readers if mediamtx else 'n/a' }}</div>
     <div><span>Live format</span>{{ (mediamtx.sample_rate ~ ' Hz / ' ~ mediamtx.channels ~ 'ch') if mediamtx and mediamtx.ready else 'n/a' }}</div>
   </div>
@@ -180,7 +181,8 @@ def render_index(errors=None):
         highpass_max=common.HIGHPASS_FREQ_MAX,
         stream_state=common.get_audio_stream_state(),
         cpu_temp=common.get_cpu_temp_celsius(),
-        uptime=common.get_uptime_string(),
+        cpu_usage=common.get_cpu_usage_percent(),
+        stream_uptime=common.get_stream_uptime_string(),
         mediamtx=common.get_mediamtx_status(),
         errors=errors or [],
     )

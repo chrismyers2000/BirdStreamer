@@ -11,6 +11,7 @@ import json
 import re
 import socket
 import subprocess
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -146,12 +147,8 @@ def get_cpu_temp_celsius():
         return None
 
 
-def get_uptime_string():
-    try:
-        seconds = float(Path("/proc/uptime").read_text().split()[0])
-    except (FileNotFoundError, ValueError, IndexError):
-        return None
-    days, seconds = divmod(int(seconds), 86400)
+def _format_duration(seconds):
+    days, seconds = divmod(seconds, 86400)
     hours, seconds = divmod(seconds, 3600)
     minutes = seconds // 60
     parts = []
@@ -161,6 +158,60 @@ def get_uptime_string():
         parts.append(f"{hours}h")
     parts.append(f"{minutes}m")
     return " ".join(parts)
+
+
+def get_uptime_string():
+    """Device (system) uptime - not shown on the control panel (which shows
+    stream uptime instead, see get_stream_uptime_string), kept here in case
+    it's useful elsewhere."""
+    try:
+        seconds = float(Path("/proc/uptime").read_text().split()[0])
+    except (FileNotFoundError, ValueError, IndexError):
+        return None
+    return _format_duration(int(seconds))
+
+
+def get_stream_uptime_string():
+    """How long audio-rtsp.service has been continuously active, using
+    systemd's monotonic timestamp (usec since boot) rather than its
+    wall-clock one, to avoid unreliable timezone-abbreviation parsing."""
+    result = subprocess.run(
+        ["systemctl", "show", "audio-rtsp", "-p", "ActiveEnterTimestampMonotonic", "--value"],
+        capture_output=True, text=True, check=False,
+    )
+    try:
+        active_since_usec = int(result.stdout.strip())
+        now_seconds = float(Path("/proc/uptime").read_text().split()[0])
+    except (ValueError, FileNotFoundError, IndexError):
+        return None
+    if active_since_usec <= 0:
+        return None
+    elapsed = now_seconds - (active_since_usec / 1_000_000)
+    if elapsed < 0:
+        return None
+    return _format_duration(int(elapsed))
+
+
+def get_cpu_usage_percent(sample_interval=0.2):
+    """Instantaneous CPU usage %, computed from the delta between two
+    /proc/stat samples taken sample_interval apart (there's no single-point
+    "current CPU usage" value in Linux - it's always a rate over some window)."""
+    def read_cpu_times():
+        line = Path("/proc/stat").read_text().splitlines()[0]
+        return [int(x) for x in line.split()[1:]]
+
+    try:
+        t1 = read_cpu_times()
+        time.sleep(sample_interval)
+        t2 = read_cpu_times()
+    except (FileNotFoundError, ValueError, IndexError):
+        return None
+
+    idle1, idle2 = t1[3] + t1[4], t2[3] + t2[4]
+    total_delta = sum(t2) - sum(t1)
+    if total_delta <= 0:
+        return None
+    return round((1 - (idle2 - idle1) / total_delta) * 100, 1)
 
 
 def get_mediamtx_status():
