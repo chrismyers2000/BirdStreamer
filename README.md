@@ -10,7 +10,28 @@ BirdStreamer turns a Raspberry Pi into a headless USB-microphone-to-RTSP audio s
 
 It uses [MediaMTX](https://github.com/bluenviron/mediamtx) as the RTSP server and `ffmpeg` to capture and publish the mic audio, both run as systemd services so the stream comes back up automatically on boot or after a crash. A small local web control panel lets you change audio settings afterward without needing to SSH back in.
 
-**Supported hardware:** any Raspberry Pi newer and faster than  the Raspberry Pi Zero 2 W**, but **not** the original (single-core) Raspberry Pi Zero W. That board's CPU can't reliably keep up with `ffmpeg` + MediaMTX running at once (confirmed via testing: pegged at 100% CPU, intermittent stream), so the installer detects and refuses to run on it rather than leave you with a flaky setup.
+## Supported hardware
+
+Any single-core Raspberry Pi automatically fails — its CPU can't reliably keep up with `ffmpeg` + MediaMTX running at once (confirmed via testing on a Zero W: pegged at 100% CPU, intermittent stream).
+
+| Model | CPU | Status |
+|---|---|---|
+| Pi Pico / Pico W / Pico 2 / Pico 2 W | Microcontroller (RP2040/RP2350) | ❌ Not applicable — doesn't run Linux/systemd |
+| Pi 1 Model A / A+ / B / B+ | Single-core ARMv6 | ❌ Not supported (single-core) |
+| Compute Module 1 (CM1) | Single-core ARMv6 | ❌ Not supported (single-core) |
+| Pi Zero (original) | Single-core ARMv6 | ❌ Not supported (No Wifi) |
+| Pi Zero W | Single-core ARMv6 | ❌ Not supported (single-core) — Tested and failed,  CPU  at 100%, stream cuts out. |
+| Pi 2 Model B | Quad-core ARMv7 | Should work (untested) |
+| Pi 3 Model B / B+ / A+ | Quad-core ARMv8 | Should work (untested) |
+| Compute Module 3 / 3+ (CM3/CM3+) | Quad-core ARMv8 | Should work (untested) |
+| **Pi Zero 2 W** | Quad-core ARMv8 | ✅ Tested and working |
+| **Pi 4 Model B** | Quad-core ARMv8 (Cortex-A72) | ✅ Tested and working |
+| Pi 400 | Quad-core ARMv8 (Cortex-A72) | Should work (untested — same SoC as Pi 4B) |
+| Compute Module 4 (CM4) | Quad-core ARMv8 (Cortex-A72) | Should work (untested) |
+| Pi 5 | Quad-core ARMv8 (Cortex-A76) | Should work (untested) |
+| Compute Module 5 (CM5) | Quad-core ARMv8 (Cortex-A76) | Should work (untested) |
+| Pi 500 | Quad-core ARMv8 (Cortex-A76) | Should work (untested — same SoC as Pi 5) |
+
 
 ## How to use it
 
