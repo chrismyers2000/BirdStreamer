@@ -21,20 +21,41 @@ PAGE = """<!doctype html>
 <html>
 <head>
 <title>BirdStreamer Control Panel</title>
+<script>
+  // Applied before body renders, to avoid a flash of the wrong theme.
+  (function() {
+    if ((localStorage.getItem('theme') || 'dark') === 'light') {
+      document.documentElement.classList.add('light');
+    }
+  })();
+</script>
 <style>
-  body { font-family: sans-serif; max-width: 480px; margin: 2rem auto; padding: 0 1rem; }
+  :root {
+    --bg: #121212; --fg: #e0e0e0; --card-bg: #1e1e1e; --border: #3a3a3a;
+    --on-bg: #1e4620; --on-fg: #8fd19e; --off-bg: #4a1c1f; --off-fg: #f5a3a8;
+  }
+  html.light {
+    --bg: #ffffff; --fg: #212529; --card-bg: #f8f9fa; --border: #ccc;
+    --on-bg: #d4edda; --on-fg: #155724; --off-bg: #f8d7da; --off-fg: #721c24;
+  }
+  body { font-family: sans-serif; max-width: 480px; margin: 2rem auto; padding: 0 1rem; background: var(--bg); color: var(--fg); }
   h1 { text-align: center; }
+  .topbar { display: flex; justify-content: flex-end; }
+  .theme-toggle { width: auto; margin: 0; padding: 0.4rem 0.8rem; background: var(--card-bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
   .status { text-align: center; font-weight: bold; padding: 0.5rem; border-radius: 6px; margin-bottom: 1rem; }
-  .on { background: #d4edda; color: #155724; }
-  .off { background: #f8d7da; color: #721c24; }
+  .on { background: var(--on-bg); color: var(--on-fg); }
+  .off { background: var(--off-bg); color: var(--off-fg); }
   form { margin-bottom: 1.5rem; }
   label { display: block; margin-top: 0.75rem; }
-  select, input[type=number] { width: 100%; padding: 0.25rem; }
+  select, input[type=number] { width: 100%; padding: 0.25rem; background: var(--card-bg); color: var(--fg); border: 1px solid var(--border); }
   input[type=range] { width: 100%; }
   button { margin-top: 1rem; width: 100%; padding: 0.5rem; }
 </style>
 </head>
 <body>
+  <div class="topbar">
+    <button type="button" class="theme-toggle" id="themeToggle" onclick="toggleTheme()"></button>
+  </div>
   <h1>BirdStreamer</h1>
   <div class="status {{ 'on' if active else 'off' }}">Stream is {{ 'ON' if active else 'OFF' }}</div>
 
@@ -59,8 +80,9 @@ PAGE = """<!doctype html>
       </select>
     </label>
 
-    <label>Gain ({{ config.gain }}x)
-      <input type="range" name="gain" min="0.5" max="4" step="0.1" value="{{ config.gain }}">
+    <label>Gain (<span id="gainValue">{{ config.gain }}</span>x)
+      <input type="range" name="gain" min="0.5" max="4" step="0.1" value="{{ config.gain }}"
+             oninput="document.getElementById('gainValue').textContent = this.value">
     </label>
 
     <label>
@@ -73,6 +95,20 @@ PAGE = """<!doctype html>
 
     <button type="submit">Save Settings &amp; Restart Stream</button>
   </form>
+
+<script>
+  function currentTheme() { return localStorage.getItem('theme') || 'dark'; }
+  function updateToggleLabel() {
+    document.getElementById('themeToggle').textContent = currentTheme() === 'light' ? '\\u{1F319} Dark' : '\\u{2600} Light';
+  }
+  function toggleTheme() {
+    var next = currentTheme() === 'dark' ? 'light' : 'dark';
+    localStorage.setItem('theme', next);
+    document.documentElement.classList.toggle('light', next === 'light');
+    updateToggleLabel();
+  }
+  updateToggleLabel();
+</script>
 </body>
 </html>
 """
