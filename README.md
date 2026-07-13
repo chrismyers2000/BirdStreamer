@@ -33,9 +33,13 @@ Any single-core Raspberry Pi automatically fails — its CPU can't reliably keep
 | Pi 500 | Quad-core ARMv8 (Cortex-A76) | Should work (untested — same SoC as Pi 5) |
 
 
-## How to use it
+## Installation
 
-**Single-line install** (the recommended way — run this on the Pi itself, over SSH or a direct terminal):
+ - Start with a fresh installation of Raspberry Pi OS.
+ - The easiest way to do this is by using the [Raspberry Pi Imager](https://www.raspberrypi.com/software/) 
+ - This was tested on Raspberry Pi OS Lite 64bit (Trixie) and is therefore the recommended OS, but others should work.
+
+Run this on the Pi itself, over SSH or a direct terminal):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/chrismyers2000/BirdStreamer/main/install.py | python3
