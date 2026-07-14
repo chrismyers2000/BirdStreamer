@@ -30,16 +30,32 @@ STREAM_PATH = "mic"
 SAMPLE_RATES = [8000, 16000, 22050, 44100, 48000]
 GAIN_MIN, GAIN_MAX = 0.5, 4.0
 HIGHPASS_FREQ_MIN, HIGHPASS_FREQ_MAX = 20, 1000
+DEVICE_NAME_MAX_LEN = 60
+
+# -rtbufsize caps how much audio ffmpeg's ALSA input can queue up before it
+# starts dropping samples if something downstream momentarily can't keep up
+# (a slow SD card write, a CPU spike, etc). It is not a fixed end-to-end
+# delay knob - in normal steady-state operation, audio flows straight
+# through and this buffer sits mostly empty. "low" trades away some
+# dropout-resistance for a smaller worst-case backlog; "high_stability"
+# does the opposite. "balanced" leaves ffmpeg's own default (~3MB) alone.
+LATENCY_MODES = {
+    "low": 65536,
+    "balanced": None,
+    "high_stability": 8388608,
+}
 
 GITHUB_RAW_BASE = "https://raw.githubusercontent.com/chrismyers2000/BirdStreamer/main"
 MEDIAMTX_API_BASE = "http://127.0.0.1:9997"
 
 DEFAULT_CONFIG = {
+    "device_name": "BirdStreamer",
     "card_name": None,
     "sample_rate": 48000,
     "gain": 1.0,
     "highpass_enabled": False,
     "highpass_freq": 100,
+    "latency_mode": "balanced",
 }
 
 
@@ -83,9 +99,11 @@ def build_execstart(config):
     alsa_device = f"plughw:CARD={config['card_name']},DEV=0"
     filter_chain = build_filter_chain(config)
     af_part = f' -af "{filter_chain}"' if filter_chain else ""
+    rtbufsize = LATENCY_MODES.get(config.get("latency_mode", "balanced"))
+    rtbufsize_part = f" -rtbufsize {rtbufsize}" if rtbufsize else ""
     return (
-        f"/usr/bin/ffmpeg -f alsa -ar {config['sample_rate']} -ac 1 "
-        f"-use_wallclock_as_timestamps 1 -i {alsa_device}{af_part} "
+        f"/usr/bin/ffmpeg -f alsa -ar {config['sample_rate']} -ac 1"
+        f"{rtbufsize_part} -use_wallclock_as_timestamps 1 -i {alsa_device}{af_part} "
         f"-acodec pcm_s16be -f rtsp rtsp://localhost:{RTSP_PORT}/{STREAM_PATH}"
     )
 

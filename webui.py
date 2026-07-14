@@ -25,7 +25,7 @@ app = Flask(__name__)
 PAGE = """<!doctype html>
 <html>
 <head>
-<title>BirdStreamer Control Panel</title>
+<title>{{ config.device_name }} Control Panel</title>
 <script>
   // Applied before body renders, to avoid a flash of the wrong theme.
   (function() {
@@ -63,13 +63,16 @@ PAGE = """<!doctype html>
   input[type=range] { width: 100%; }
   button { margin-top: 1rem; width: 100%; padding: 0.5rem; }
   .secondary { background: var(--card-bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+  .listen-live { margin-bottom: 1.5rem; }
+  .listen-live iframe { width: 100%; height: 100px; border: 1px solid var(--border); border-radius: 6px; }
+  .listen-live a { display: block; text-align: center; font-size: 0.85rem; margin-top: 0.3rem; color: var(--fg); opacity: 0.7; }
 </style>
 </head>
 <body>
   <div class="topbar">
     <button type="button" class="theme-toggle" id="themeToggle" onclick="toggleTheme()"></button>
   </div>
-  <h1>BirdStreamer</h1>
+  <h1>{{ config.device_name }}</h1>
 
   {% if errors %}
   <div class="errors">
@@ -90,11 +93,22 @@ PAGE = """<!doctype html>
     <div><span>Live format</span>{{ (mediamtx.sample_rate ~ ' Hz / ' ~ mediamtx.channels ~ 'ch') if mediamtx and mediamtx.ready else 'n/a' }}</div>
   </div>
 
+  {% if stream_state == 'active' %}
+  <div class="listen-live">
+    <iframe src="http://{{ webrtc_host }}:8889/{{ stream_path }}/?muted=false&controls=true" allow="autoplay"></iframe>
+    <a href="http://{{ webrtc_host }}:8889/{{ stream_path }}/?muted=false&controls=true" target="_blank">Open in new tab &#8599;</a>
+  </div>
+  {% endif %}
+
   <form method="post" action="{{ url_for('toggle') }}">
     <button type="submit">{{ 'Turn Stream Off' if stream_state == 'active' else 'Turn Stream On' }}</button>
   </form>
 
   <form method="post" action="{{ url_for('settings') }}">
+    <label>Device name
+      <input type="text" name="device_name" maxlength="{{ device_name_max_len }}" value="{{ config.device_name }}">
+    </label>
+
     <label>Sound card
       <select name="card_name">
         {% for c in cards %}
@@ -122,6 +136,14 @@ PAGE = """<!doctype html>
     </label>
     <label>High-pass frequency (Hz)
       <input type="number" name="highpass_freq" min="{{ highpass_min }}" max="{{ highpass_max }}" value="{{ config.highpass_freq }}">
+    </label>
+
+    <label>Capture buffer
+      <select name="latency_mode">
+        <option value="low" {{ 'selected' if config.latency_mode == 'low' else '' }}>Low latency (less resilient to hiccups)</option>
+        <option value="balanced" {{ 'selected' if config.latency_mode == 'balanced' else '' }}>Balanced (default)</option>
+        <option value="high_stability" {{ 'selected' if config.latency_mode == 'high_stability' else '' }}>High stability (more latency)</option>
+      </select>
     </label>
 
     <button type="submit">Save Settings &amp; Restart Stream</button>
@@ -179,17 +201,27 @@ def render_index(errors=None):
         gain_max=common.GAIN_MAX,
         highpass_min=common.HIGHPASS_FREQ_MIN,
         highpass_max=common.HIGHPASS_FREQ_MAX,
+        device_name_max_len=common.DEVICE_NAME_MAX_LEN,
         stream_state=common.get_audio_stream_state(),
         cpu_temp=common.get_cpu_temp_celsius(),
         cpu_usage=common.get_cpu_usage_percent(),
         stream_uptime=common.get_stream_uptime_string(),
         mediamtx=common.get_mediamtx_status(),
+        webrtc_host=request.host.split(":")[0],
+        stream_path=common.STREAM_PATH,
         errors=errors or [],
     )
 
 
 def validate_settings(form, cards):
     errors = []
+
+    device_name = form.get("device_name", "").strip()
+    if not device_name:
+        errors.append("Device name can't be empty")
+    elif len(device_name) > common.DEVICE_NAME_MAX_LEN:
+        errors.append(f"Device name must be at most {common.DEVICE_NAME_MAX_LEN} characters")
+
     card_ids = {c["id"] for c in cards}
     card_name = form.get("card_name", "")
     if card_name not in card_ids:
@@ -220,14 +252,20 @@ def validate_settings(form, cards):
     except ValueError:
         errors.append("High-pass frequency must be a number")
 
+    latency_mode = form.get("latency_mode", "")
+    if latency_mode not in common.LATENCY_MODES:
+        errors.append(f"Invalid capture buffer mode: {latency_mode!r}")
+
     if errors:
         return None, errors
     return {
+        "device_name": device_name,
         "card_name": card_name,
         "sample_rate": sample_rate,
         "gain": gain,
         "highpass_enabled": highpass_enabled,
         "highpass_freq": highpass_freq,
+        "latency_mode": latency_mode,
     }, []
 
 
