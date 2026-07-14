@@ -53,12 +53,20 @@ def sudo_write(path, content):
 def fetch_repo_file(dest, filename, script_dir):
     """Copy filename from a local checkout (script_dir) if present, else
     download it from this repo's own GitHub mirror - same vendored-or-mirror
-    pattern used for the MediaMTX binaries."""
+    pattern used for the MediaMTX binaries. Uses the GitHub Contents API
+    rather than raw.githubusercontent.com: confirmed in practice that the
+    raw CDN caches for up to 5 minutes and ignores both cache-busting query
+    params and no-cache headers, silently serving stale code right after a
+    push with no error. The Contents API caches for only ~60s."""
     if script_dir and (script_dir / filename).is_file():
         dest.write_bytes((script_dir / filename).read_bytes())
     else:
-        url = f"https://raw.githubusercontent.com/chrismyers2000/BirdStreamer/main/{filename}"
-        urllib.request.urlretrieve(url, dest)
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/chrismyers2000/BirdStreamer/contents/{filename}",
+            headers={"Accept": "application/vnd.github.raw"},
+        )
+        with urllib.request.urlopen(req) as resp:
+            dest.write_bytes(resp.read())
 
 
 def install_sudoers_rule(user_name, audio_service_path):

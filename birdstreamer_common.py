@@ -46,6 +46,7 @@ LATENCY_MODES = {
 }
 
 GITHUB_RAW_BASE = "https://raw.githubusercontent.com/chrismyers2000/BirdStreamer/main"
+GITHUB_API_CONTENTS_BASE = "https://api.github.com/repos/chrismyers2000/BirdStreamer/contents"
 MEDIAMTX_API_BASE = "http://127.0.0.1:9997"
 
 DEFAULT_CONFIG = {
@@ -258,8 +259,21 @@ def fetch_repo_file(dest, filename, script_dir=None):
     download it from this repo's own GitHub mirror. Used both by install.py
     (initial setup) and webui.py (self-update) - install.py can't rely on
     importing this for the very first fetch of this file itself, so it
-    keeps its own minimal bootstrap copy of this logic for that one case."""
+    keeps its own minimal bootstrap copy of this logic for that one case.
+
+    Uses the GitHub Contents API rather than raw.githubusercontent.com:
+    confirmed in practice that the raw CDN caches for up to 5 minutes and
+    completely ignores both cache-busting query params and no-cache request
+    headers (a plain client can't force it to revalidate), which can
+    silently serve stale/older code right after a push with no error at
+    all. The Contents API caches for only ~60s and reflects a fresh push
+    correctly - not a perfect fix, but a much smaller staleness window."""
     if script_dir and (Path(script_dir) / filename).is_file():
         dest.write_bytes((Path(script_dir) / filename).read_bytes())
     else:
-        urllib.request.urlretrieve(f"{GITHUB_RAW_BASE}/{filename}", dest)
+        req = urllib.request.Request(
+            f"{GITHUB_API_CONTENTS_BASE}/{filename}",
+            headers={"Accept": "application/vnd.github.raw"},
+        )
+        with urllib.request.urlopen(req) as resp:
+            dest.write_bytes(resp.read())
