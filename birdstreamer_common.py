@@ -30,7 +30,10 @@ STREAM_PATH = "mic"
 SAMPLE_RATES = [8000, 16000, 22050, 44100, 48000]
 GAIN_MIN, GAIN_MAX = 0.5, 4.0
 HIGHPASS_FREQ_MIN, HIGHPASS_FREQ_MAX = 20, 1000
+NOISE_GATE_DB_MIN, NOISE_GATE_DB_MAX = -60, -10
+HW_GAIN_MIN, HW_GAIN_MAX = 0, 100
 DEVICE_NAME_MAX_LEN = 60
+SELF_TEST_CLIP_SECONDS = 5
 
 # -rtbufsize caps how much audio ffmpeg's ALSA input can queue up before it
 # starts dropping samples if something downstream momentarily can't keep up
@@ -56,6 +59,10 @@ DEFAULT_CONFIG = {
     "gain": 1.0,
     "highpass_enabled": False,
     "highpass_freq": 100,
+    "noise_gate_enabled": False,
+    "noise_gate_threshold_db": -30,
+    "hw_gain_enabled": False,
+    "hw_gain_percent": 100,
     "latency_mode": "balanced",
 }
 
@@ -86,10 +93,34 @@ def detect_cards():
     return cards
 
 
+def get_primary_capture_control(card_name):
+    """Best-effort: return the name of the first ALSA simple mixer control
+    for this card that looks like an adjustable capture gain (has 'cvolume'
+    capability, not just an on/off switch, and mentions 'Capture'). Many
+    cheap USB mics expose none at all - callers should treat None as
+    "no hardware gain control available for this device"."""
+    result = subprocess.run(["amixer", "-c", card_name, "scontrols"],
+                             capture_output=True, text=True, check=False)
+    for line in result.stdout.splitlines():
+        m = re.search(r"'([^']+)'", line)
+        if not m:
+            continue
+        control = m.group(1)
+        detail = subprocess.run(["amixer", "-c", card_name, "sget", control],
+                                 capture_output=True, text=True, check=False).stdout
+        if "cvolume" in detail and "Capture" in detail:
+            return control
+    return None
+
+
 def build_filter_chain(config):
     filters = []
     if config.get("highpass_enabled"):
         filters.append(f"highpass=f={config['highpass_freq']}")
+    if config.get("noise_gate_enabled"):
+        db = config.get("noise_gate_threshold_db", -30)
+        linear_threshold = 10 ** (db / 20)
+        filters.append(f"agate=threshold={linear_threshold:.6f}")
     gain = float(config.get("gain", 1.0))
     if gain != 1.0:
         filters.append(f"volume={gain}")
@@ -112,6 +143,17 @@ def build_execstart(config):
 def write_audio_service(config):
     user_name = getpass.getuser()
     execstart = build_execstart(config)
+
+    hw_gain_execstartpre = ""
+    if config.get("hw_gain_enabled"):
+        control = get_primary_capture_control(config["card_name"])
+        if control:
+            percent = config.get("hw_gain_percent", 100)
+            hw_gain_execstartpre = (
+                f"ExecStartPre=/usr/bin/amixer -c {config['card_name']} "
+                f"sset {control} {percent}%\n"
+            )
+
     content = f"""[Unit]
 Description=Audio RTSP Publisher
 After=mediamtx.service sound.target
@@ -121,7 +163,7 @@ StartLimitBurst=10
 
 [Service]
 ExecStartPre=/bin/sleep 10
-ExecStart={execstart}
+{hw_gain_execstartpre}ExecStart={execstart}
 Restart=always
 RestartSec=5
 User={user_name}
@@ -156,6 +198,28 @@ def stop_audio_stream():
 
 def restart_audio_stream():
     subprocess.run(["sudo", "systemctl", "restart", "audio-rtsp"], check=True)
+
+
+SELF_TEST_CLIP_PATH = APP_DIR / "self_test.wav"
+
+
+def capture_self_test_clip():
+    """Captures a short clip to confirm the mic is actually picking up
+    sound, without needing an external RTSP client. If the stream is
+    already active, captures from the local RTSP stream instead of the raw
+    ALSA device - the mic is normally held open exclusively by the running
+    ffmpeg publisher, so a second process can't also open it directly."""
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+    if is_audio_stream_active():
+        cmd = ["ffmpeg", "-y", "-rtsp_transport", "tcp",
+               "-i", f"rtsp://localhost:{RTSP_PORT}/{STREAM_PATH}",
+               "-t", str(SELF_TEST_CLIP_SECONDS), str(SELF_TEST_CLIP_PATH)]
+    else:
+        config = load_config()
+        alsa_device = f"plughw:CARD={config['card_name']},DEV=0"
+        cmd = ["ffmpeg", "-y", "-f", "alsa", "-i", alsa_device,
+               "-t", str(SELF_TEST_CLIP_SECONDS), str(SELF_TEST_CLIP_PATH)]
+    subprocess.run(cmd, capture_output=True, timeout=SELF_TEST_CLIP_SECONDS + 10, check=True)
 
 
 def get_cpu_temp_celsius():

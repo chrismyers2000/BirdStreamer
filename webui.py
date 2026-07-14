@@ -10,6 +10,7 @@
 # are refetched together by the self-update button below).
 
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -18,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import birdstreamer_common as common  # noqa: E402
 
-from flask import Flask, render_template_string, request, redirect, url_for  # noqa: E402
+from flask import Flask, render_template_string, request, redirect, url_for, send_file, abort  # noqa: E402
 
 app = Flask(__name__)
 
@@ -66,6 +67,13 @@ PAGE = """<!doctype html>
   .listen-live { margin-bottom: 1.5rem; }
   .listen-live iframe { width: 100%; height: 100px; border: 1px solid var(--border); border-radius: 6px; }
   .listen-live a { display: block; text-align: center; font-size: 0.85rem; margin-top: 0.3rem; color: var(--fg); opacity: 0.7; }
+  .section-title { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.6; margin: 1.5rem 0 0.25rem; border-bottom: 1px solid var(--border); padding-bottom: 0.25rem; }
+  .section-title:first-child { margin-top: 0; }
+  details { margin-top: 1rem; border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem 0.75rem; }
+  details summary { cursor: pointer; font-size: 0.9rem; opacity: 0.8; }
+  details[open] summary { margin-bottom: 0.5rem; }
+  .self-test audio { width: 100%; margin-top: 0.5rem; }
+  .hint { font-size: 0.8rem; opacity: 0.6; margin: 0.2rem 0 0; }
 </style>
 </head>
 <body>
@@ -104,11 +112,20 @@ PAGE = """<!doctype html>
     <button type="submit">{{ 'Turn Stream Off' if stream_state == 'active' else 'Turn Stream On' }}</button>
   </form>
 
+  <form method="post" action="{{ url_for('self_test') }}" class="self-test">
+    <button type="submit" class="secondary">Record {{ self_test_seconds }}s Test Clip</button>
+    {% if self_test_clip_mtime %}
+    <audio controls src="{{ url_for('self_test_clip') }}?t={{ self_test_clip_mtime }}"></audio>
+    {% endif %}
+  </form>
+
   <form method="post" action="{{ url_for('settings') }}">
+    <h2 class="section-title">Device</h2>
     <label>Device name
       <input type="text" name="device_name" maxlength="{{ device_name_max_len }}" value="{{ config.device_name }}">
     </label>
 
+    <h2 class="section-title">Input</h2>
     <label>Sound card
       <select name="card_name">
         {% for c in cards %}
@@ -116,7 +133,6 @@ PAGE = """<!doctype html>
         {% endfor %}
       </select>
     </label>
-
     <label>Sample rate
       <select name="sample_rate">
         {% for r in rates %}
@@ -125,6 +141,7 @@ PAGE = """<!doctype html>
       </select>
     </label>
 
+    <h2 class="section-title">Audio Processing</h2>
     <label>Gain (<span id="gainValue">{{ config.gain }}</span>x)
       <input type="range" name="gain" min="{{ gain_min }}" max="{{ gain_max }}" step="0.1" value="{{ config.gain }}"
              oninput="document.getElementById('gainValue').textContent = this.value">
@@ -138,13 +155,39 @@ PAGE = """<!doctype html>
       <input type="number" name="highpass_freq" min="{{ highpass_min }}" max="{{ highpass_max }}" value="{{ config.highpass_freq }}">
     </label>
 
-    <label>Capture buffer
-      <select name="latency_mode">
-        <option value="low" {{ 'selected' if config.latency_mode == 'low' else '' }}>Low latency (less resilient to hiccups)</option>
-        <option value="balanced" {{ 'selected' if config.latency_mode == 'balanced' else '' }}>Balanced (default)</option>
-        <option value="high_stability" {{ 'selected' if config.latency_mode == 'high_stability' else '' }}>High stability (more latency)</option>
-      </select>
+    <label>
+      <input type="checkbox" name="noise_gate_enabled" {{ 'checked' if config.noise_gate_enabled else '' }}>
+      Enable noise gate (mutes audio quieter than this threshold)
     </label>
+    <label>Noise gate threshold (<span id="noiseGateValue">{{ config.noise_gate_threshold_db }}</span> dB)
+      <input type="range" name="noise_gate_threshold_db" min="{{ noise_gate_db_min }}" max="{{ noise_gate_db_max }}" step="1" value="{{ config.noise_gate_threshold_db }}"
+             oninput="document.getElementById('noiseGateValue').textContent = this.value">
+    </label>
+
+    <details>
+      <summary>Advanced</summary>
+
+      {% if hw_gain_available %}
+      <label>
+        <input type="checkbox" name="hw_gain_enabled" {{ 'checked' if config.hw_gain_enabled else '' }}>
+        Enable hardware input gain (adjusts the mic's own capture level, cleaner than software gain alone)
+      </label>
+      <label>Hardware gain (<span id="hwGainValue">{{ config.hw_gain_percent }}</span>%)
+        <input type="range" name="hw_gain_percent" min="{{ hw_gain_min }}" max="{{ hw_gain_max }}" step="1" value="{{ config.hw_gain_percent }}"
+               oninput="document.getElementById('hwGainValue').textContent = this.value">
+      </label>
+      {% else %}
+      <p class="hint">No adjustable hardware gain control detected for this sound card.</p>
+      {% endif %}
+
+      <label>Capture buffer
+        <select name="latency_mode">
+          <option value="low" {{ 'selected' if config.latency_mode == 'low' else '' }}>Low latency (less resilient to hiccups)</option>
+          <option value="balanced" {{ 'selected' if config.latency_mode == 'balanced' else '' }}>Balanced (default)</option>
+          <option value="high_stability" {{ 'selected' if config.latency_mode == 'high_stability' else '' }}>High stability (more latency)</option>
+        </select>
+      </label>
+    </details>
 
     <button type="submit">Save Settings &amp; Restart Stream</button>
   </form>
@@ -192,6 +235,8 @@ def render_index(errors=None):
     cards = common.detect_cards()
     if config["card_name"] is None and cards:
         config["card_name"] = cards[0]["id"]
+    hw_gain_available = bool(config["card_name"] and common.get_primary_capture_control(config["card_name"]))
+    clip_mtime = int(common.SELF_TEST_CLIP_PATH.stat().st_mtime) if common.SELF_TEST_CLIP_PATH.exists() else None
     return render_template_string(
         PAGE,
         config=config,
@@ -201,7 +246,14 @@ def render_index(errors=None):
         gain_max=common.GAIN_MAX,
         highpass_min=common.HIGHPASS_FREQ_MIN,
         highpass_max=common.HIGHPASS_FREQ_MAX,
+        noise_gate_db_min=common.NOISE_GATE_DB_MIN,
+        noise_gate_db_max=common.NOISE_GATE_DB_MAX,
+        hw_gain_min=common.HW_GAIN_MIN,
+        hw_gain_max=common.HW_GAIN_MAX,
+        hw_gain_available=hw_gain_available,
         device_name_max_len=common.DEVICE_NAME_MAX_LEN,
+        self_test_seconds=common.SELF_TEST_CLIP_SECONDS,
+        self_test_clip_mtime=clip_mtime,
         stream_state=common.get_audio_stream_state(),
         cpu_temp=common.get_cpu_temp_celsius(),
         cpu_usage=common.get_cpu_usage_percent(),
@@ -252,6 +304,30 @@ def validate_settings(form, cards):
     except ValueError:
         errors.append("High-pass frequency must be a number")
 
+    noise_gate_enabled = "noise_gate_enabled" in form
+    noise_gate_threshold_db = None
+    try:
+        noise_gate_threshold_db = int(form.get("noise_gate_threshold_db", ""))
+        if not (common.NOISE_GATE_DB_MIN <= noise_gate_threshold_db <= common.NOISE_GATE_DB_MAX):
+            errors.append(f"Noise gate threshold must be between {common.NOISE_GATE_DB_MIN} and {common.NOISE_GATE_DB_MAX} dB")
+    except ValueError:
+        errors.append("Noise gate threshold must be a number")
+
+    # hw_gain_percent only appears in the form when a hardware gain control
+    # was actually detected for the current card - absent, not empty, when
+    # there's nothing to control. Don't treat that as a validation error.
+    hw_gain_enabled = "hw_gain_enabled" in form
+    if "hw_gain_percent" in form:
+        hw_gain_percent = None
+        try:
+            hw_gain_percent = int(form.get("hw_gain_percent"))
+            if not (common.HW_GAIN_MIN <= hw_gain_percent <= common.HW_GAIN_MAX):
+                errors.append(f"Hardware gain must be between {common.HW_GAIN_MIN} and {common.HW_GAIN_MAX}")
+        except ValueError:
+            errors.append("Hardware gain must be a number")
+    else:
+        hw_gain_percent = common.DEFAULT_CONFIG["hw_gain_percent"]
+
     latency_mode = form.get("latency_mode", "")
     if latency_mode not in common.LATENCY_MODES:
         errors.append(f"Invalid capture buffer mode: {latency_mode!r}")
@@ -265,6 +341,10 @@ def validate_settings(form, cards):
         "gain": gain,
         "highpass_enabled": highpass_enabled,
         "highpass_freq": highpass_freq,
+        "noise_gate_enabled": noise_gate_enabled,
+        "noise_gate_threshold_db": noise_gate_threshold_db,
+        "hw_gain_enabled": hw_gain_enabled,
+        "hw_gain_percent": hw_gain_percent,
         "latency_mode": latency_mode,
     }, []
 
@@ -293,6 +373,22 @@ def settings():
     common.write_audio_service(new_config)
     common.restart_audio_stream()
     return redirect(url_for("index"))
+
+
+@app.route("/self_test", methods=["POST"])
+def self_test():
+    try:
+        common.capture_self_test_clip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        return render_index(errors=[f"Self-test capture failed: {e}"]), 500
+    return redirect(url_for("index"))
+
+
+@app.route("/self_test_clip")
+def self_test_clip():
+    if not common.SELF_TEST_CLIP_PATH.exists():
+        abort(404)
+    return send_file(common.SELF_TEST_CLIP_PATH, mimetype="audio/wav")
 
 
 def _delayed_reexec():
