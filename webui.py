@@ -300,9 +300,24 @@ def _delayed_reexec():
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
+CONFIG_BACKUP_PATH = common.APP_DIR / "config.json.update-backup"
+
+
+def _restore_config_backup_if_present():
+    """Runs at process startup (including right after self-update's re-exec).
+    Belt-and-suspenders: the update route backs up config.json before
+    fetching new code, in case anything about the fetch/re-exec cycle
+    affects it. Always wins over whatever's currently in config.json, since
+    it's a snapshot of settings from immediately before the update."""
+    if CONFIG_BACKUP_PATH.exists():
+        CONFIG_BACKUP_PATH.replace(common.CONFIG_PATH)
+
+
 @app.route("/update", methods=["POST"])
 def update():
     app_dir = Path(__file__).resolve().parent
+    if common.CONFIG_PATH.exists():
+        CONFIG_BACKUP_PATH.write_text(common.CONFIG_PATH.read_text())
     try:
         common.fetch_repo_file(app_dir / "birdstreamer_common.py", "birdstreamer_common.py")
         common.fetch_repo_file(app_dir / "webui.py", "webui.py")
@@ -311,6 +326,8 @@ def update():
     threading.Thread(target=_delayed_reexec, daemon=True).start()
     return UPDATE_PAGE
 
+
+_restore_config_backup_if_present()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
